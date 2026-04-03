@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-
 # Standard Library
 import os
 from pathlib import Path
@@ -42,7 +41,8 @@ BLENDER_VERSION = "blender-2.93.8-linux-x64"
 BLENDER_INSTALL_DIR = LOCAL_DATA_DIR / BLENDER_VERSION
 if not BLENDER_INSTALL_DIR.exists():
     BLENDER_INSTALL_DIR = Path(os.environ["HOME"]) / BLENDER_VERSION
-PYTHON_BIN_PATH = Path(os.environ["CONDA_PREFIX"]) / "bin/python"
+# PYTHON_BIN_PATH = Path(os.environ["CONDA_PREFIX"]) / "bin/python"
+PYTHON_BIN_PATH = Path(os.environ["VIRTUAL_ENV"]) / "bin/python"
 
 BOP_PANDA3D_DS_DIR = LOCAL_DATA_DIR / "bop_models_panda3d"
 

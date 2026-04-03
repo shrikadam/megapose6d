@@ -7,9 +7,12 @@ from typing import List, Tuple, Union
 
 # Third Party
 import numpy as np
-from bokeh.io import export_png
-from bokeh.plotting import gridplot
+import torch
+
+# from bokeh.io import export_png
+# from bokeh.plotting import gridplot
 from PIL import Image
+import cv2
 
 # MegaPose
 from megapose.config import LOCAL_DATA_DIR
@@ -27,7 +30,8 @@ from megapose.panda3d_renderer.panda3d_scene_renderer import Panda3dSceneRendere
 from megapose.utils.conversion import convert_scene_observation_to_panda3d
 from megapose.utils.load_model import NAMED_MODELS, load_named_model
 from megapose.utils.logging import get_logger, set_logging_level
-from megapose.visualization.bokeh_plotter import BokehPlotter
+
+# from megapose.visualization.bokeh_plotter import BokehPlotter
 from megapose.visualization.utils import make_contour_overlay
 
 logger = get_logger(__name__)
@@ -91,17 +95,46 @@ def make_object_dataset(example_dir: Path) -> RigidObjectDataset:
     return rigid_object_dataset
 
 
+# def make_detections_visualization(
+#     example_dir: Path,
+# ) -> None:
+#     rgb, _, _ = load_observation(example_dir, load_depth=False)
+#     detections = load_detections(example_dir)
+#     plotter = BokehPlotter()
+#     fig_rgb = plotter.plot_image(rgb)
+#     fig_det = plotter.plot_detections(fig_rgb, detections=detections)
+#     output_fn = example_dir / "visualizations" / "detections.png"
+#     output_fn.parent.mkdir(exist_ok=True)
+#     export_png(fig_det, filename=output_fn)
+#     logger.info(f"Wrote detections visualization: {output_fn}")
+#     return
+
+
 def make_detections_visualization(
     example_dir: Path,
 ) -> None:
     rgb, _, _ = load_observation(example_dir, load_depth=False)
     detections = load_detections(example_dir)
-    plotter = BokehPlotter()
-    fig_rgb = plotter.plot_image(rgb)
-    fig_det = plotter.plot_detections(fig_rgb, detections=detections)
+
+    # Convert RGB to BGR for OpenCV saving
+    img_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+    # Extract bounding boxes and labels
+    bboxes = detections.bboxes.cpu().numpy()
+    labels = detections.infos["label"].tolist()
+
+    # Draw boxes and text
+    for bbox, label in zip(bboxes, labels):
+        xmin, ymin, xmax, ymax = [int(v) for v in bbox]
+        cv2.rectangle(img_bgr, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
+        cv2.putText(
+            img_bgr, label, (xmin, ymin - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2
+        )
+
     output_fn = example_dir / "visualizations" / "detections.png"
     output_fn.parent.mkdir(exist_ok=True)
-    export_png(fig_det, filename=output_fn)
+    cv2.imwrite(str(output_fn), img_bgr)
+
     logger.info(f"Wrote detections visualization: {output_fn}")
     return
 
@@ -137,12 +170,35 @@ def run_inference(
     object_dataset = make_object_dataset(example_dir)
 
     logger.info(f"Loading model {model_name}.")
-    pose_estimator = load_named_model(model_name, object_dataset).cuda()
+    # DIET TRICK 1: Reduce workers to 1.
+    # Your log showed 4 'glxGraphicsPipe' prints. That means 4 Panda3D rendering
+    # engines were loaded into VRAM. We must restrict this to 1.
+    pose_estimator = load_named_model(model_name, object_dataset, n_workers=1).cuda()
+
+    # DIET TRICK 2: Slash the rendering batch size.
+    # Default is usually 256 or 512. We will force it to render in tiny chunks of 16.
+    # It will take slightly longer, but it will fit in memory.
+    pose_estimator.bsz_images = 16
+
+    # DIET TRICK 3: Shrink the SO(3) search grid.
+    # Default is 576 orientations. 72 is the lowest MegaPose natively supports.
+    # This makes the initial detection slightly less accurate, but saves massive VRAM.
+    pose_estimator.load_SO3_grid(72)
 
     logger.info(f"Running inference.")
-    output, _ = pose_estimator.run_inference_pipeline(
-        observation, detections=detections, **model_info["inference_parameters"]
-    )
+
+    # DIET TRICK 4: PyTorch Automatic Mixed Precision (FP16).
+    # This forces the neural network to use 16-bit floats instead of 32-bit floats
+    # for its internal math, cutting activation memory usage in half.
+    with torch.autocast(device_type="cuda", dtype=torch.float16):
+        output, _ = pose_estimator.run_inference_pipeline(
+            observation, detections=detections, **model_info["inference_parameters"]
+        )
+
+    # logger.info(f"Running inference.")
+    # output, _ = pose_estimator.run_inference_pipeline(
+    #     observation, detections=detections, **model_info["inference_parameters"]
+    # )
 
     save_predictions(example_dir, output)
     return
@@ -176,20 +232,53 @@ def make_output_visualization(
         copy_arrays=True,
     )[0]
 
-    plotter = BokehPlotter()
+    # plotter = BokehPlotter()
 
-    fig_rgb = plotter.plot_image(rgb)
-    fig_mesh_overlay = plotter.plot_overlay(rgb, renderings.rgb)
-    contour_overlay = make_contour_overlay(
+    # fig_rgb = plotter.plot_image(rgb)
+    # fig_mesh_overlay = plotter.plot_overlay(rgb, renderings.rgb)
+    # contour_overlay = make_contour_overlay(
+    #     rgb, renderings.rgb, dilate_iterations=1, color=(0, 255, 0)
+    # )["img"]
+    # fig_contour_overlay = plotter.plot_image(contour_overlay)
+    # fig_all = gridplot([[fig_rgb, fig_contour_overlay, fig_mesh_overlay]], toolbar_location=None)
+    # vis_dir = example_dir / "visualizations"
+    # vis_dir.mkdir(exist_ok=True)
+    # export_png(fig_mesh_overlay, filename=vis_dir / "mesh_overlay.png")
+    # export_png(fig_contour_overlay, filename=vis_dir / "contour_overlay.png")
+    # export_png(fig_all, filename=vis_dir / "all_results.png")
+    # logger.info(f"Wrote visualizations to {vis_dir}.")
+    # return
+
+    # 1. Create Mesh Overlay (Alpha Blend)
+    # renderings.rgb has a black background (0,0,0), so we blend where pixels are not black
+    mask = np.sum(renderings.rgb, axis=-1) > 0
+    mesh_overlay_rgb = rgb.copy()
+    alpha = 0.75  # 75% opacity for the CAD model
+    mesh_overlay_rgb[mask] = (rgb[mask] * (1 - alpha) + renderings.rgb[mask] * alpha).astype(
+        np.uint8
+    )
+
+    # 2. Create Contour Overlay
+    contour_overlay_rgb = make_contour_overlay(
         rgb, renderings.rgb, dilate_iterations=1, color=(0, 255, 0)
     )["img"]
-    fig_contour_overlay = plotter.plot_image(contour_overlay)
-    fig_all = gridplot([[fig_rgb, fig_contour_overlay, fig_mesh_overlay]], toolbar_location=None)
+
+    # 3. Convert all arrays from RGB to BGR for OpenCV
+    rgb_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    mesh_overlay_bgr = cv2.cvtColor(mesh_overlay_rgb, cv2.COLOR_RGB2BGR)
+    contour_overlay_bgr = cv2.cvtColor(contour_overlay_rgb, cv2.COLOR_RGB2BGR)
+
+    # 4. Create "all_results.png" by concatenating images horizontally
+    fig_all_bgr = cv2.hconcat([rgb_bgr, contour_overlay_bgr, mesh_overlay_bgr])
+
+    # 5. Save everything
     vis_dir = example_dir / "visualizations"
     vis_dir.mkdir(exist_ok=True)
-    export_png(fig_mesh_overlay, filename=vis_dir / "mesh_overlay.png")
-    export_png(fig_contour_overlay, filename=vis_dir / "contour_overlay.png")
-    export_png(fig_all, filename=vis_dir / "all_results.png")
+
+    cv2.imwrite(str(vis_dir / "mesh_overlay.png"), mesh_overlay_bgr)
+    cv2.imwrite(str(vis_dir / "contour_overlay.png"), contour_overlay_bgr)
+    cv2.imwrite(str(vis_dir / "all_results.png"), fig_all_bgr)
+
     logger.info(f"Wrote visualizations to {vis_dir}.")
     return
 

@@ -1,0 +1,54 @@
+--extra-index-url https://download.pytorch.org/whl/cu113
+torch==1.11.0+cu113 
+torchvision==0.12.0+cu113 
+torchaudio==0.11.0
+
+wget
+joblib
+ipython
+ipykernel
+jupyterlab
+notebook
+jupyter_contrib_nbextensions
+rclone
+pillow
+ipywidgets
+selenium
+geckodriver
+meshcat
+omegaconf
+simplejson
+line_profiler 
+opencv-python
+tqdm
+lxml
+transforms3d
+panda3d
+xarray 
+pandas
+matplotlib
+bokeh
+plyfile 
+trimesh 
+ipdb 
+panda3d-gltf
+colorama
+pyyaml
+scipy
+pypng
+h5py 
+seaborn
+# kornia 
+pyarrow 
+dt_apriltags 
+open3d
+structlog
+imageio
+# progressbar
+psutil
+webdataset
+opencv-contrib-python 
+roma 
+pin
+# torchnet
+# torchgeometry

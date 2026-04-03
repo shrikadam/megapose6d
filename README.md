@@ -274,6 +274,11 @@ $MEGAPOSE_DATA_DIR/examples/barbecue-sauce/
 
 <img src="images/example/all_results.png" width="1000">
 
+# Video Inference
+```bash
+python -m megapose.scripts.run_inference_on_video   --video ./local_data/examples/servo/video.mp4   --label "servo"   --camera-json ./local_data/examples/servo/camera_data.json   --meshes-directory ./local_data/examples/servo/meshes   --output-video final_tracked_servo.mp4
+```
+
 # Model Zoo
 
 | Model name                            | Input |
