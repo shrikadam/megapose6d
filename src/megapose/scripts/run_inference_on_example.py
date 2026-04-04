@@ -85,7 +85,7 @@ def make_object_dataset(example_dir: Path) -> RigidObjectDataset:
         label = object_dir.name
         mesh_path = None
         for fn in object_dir.glob("*"):
-            if fn.suffix in {".obj", ".ply"}:
+            if fn.suffix in {".obj", ".ply", ".glb"}:
                 assert not mesh_path, f"there multiple meshes in the {label} directory"
                 mesh_path = fn
         assert mesh_path, f"couldnt find a obj or ply mesh for {label}"
@@ -183,7 +183,7 @@ def run_inference(
     # DIET TRICK 3: Shrink the SO(3) search grid.
     # Default is 576 orientations. 72 is the lowest MegaPose natively supports.
     # This makes the initial detection slightly less accurate, but saves massive VRAM.
-    pose_estimator.load_SO3_grid(72)
+    pose_estimator.load_SO3_grid(576)
 
     logger.info(f"Running inference.")
 

@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-
 # Standard Library
 import time
 from collections import defaultdict
@@ -213,7 +212,9 @@ class PosePredictor(nn.Module):
         assert TCO.shape == (bsz, 4, 4)
         assert len(labels) == bsz
         meshes = self.mesh_db.select(labels)
-        points = meshes.sample_points(2000, deterministic=True)
+        # points = meshes.sample_points(2000, deterministic=True)
+        n_sample = min(2000, meshes.points.shape[1])
+        points = meshes.sample_points(n_sample, deterministic=True)
 
         uv = project_points_robust(points, K, TCO)
         boxes_rend = boxes_from_uv(uv)
@@ -606,7 +607,6 @@ class PosePredictor(nn.Module):
     def forward_coarse_tensor(
         self, x: torch.Tensor, cuda_timer: bool = False
     ) -> Dict[str, Union[torch.Tensor, float]]:
-
         """Forward pass on coarse model given an input tensor.
 
         The input already contains the concatenated input + rendered images and has
