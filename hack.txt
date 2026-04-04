@@ -1,1 +1,0 @@
-PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32 python -m megapose.scripts.run_inference_on_video   --video ./local_data/examples/servo/video.mp4   --label "servo"   --camera-json ./local_data/examples/servo/camera_data.json   --meshes-directory ./local_data/examples/servo/meshes   --output-video final_tracked_servo.mp4

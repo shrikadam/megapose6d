@@ -1,35 +1,6 @@
-# Set megapose environment variables
-import os
-import json
-import sys
-
-# Try to load megapose variables, fallback to current directory if not found
-# try:
-#     import megapose_server
-
-#     variables_file = "./megapose_server/megapose_variables_final.json"
-#     with open(variables_file, "r") as f:
-#         json_vars = json.load(f)
-#         os.environ["MEGAPOSE_DIR"] = json_vars["megapose_dir"]
-#         os.environ["MEGAPOSE_DATA_DIR"] = json_vars["megapose_data_dir"]
-# except Exception as e:
-#     print(f"[WARNING] Could not load megapose_variables_final.json: {e}")
-#     print("[WARNING] Ensure MEGAPOSE_DIR and MEGAPOSE_DATA_DIR are set in your environment.")
-from scipy.spatial.transform import Slerp
-
-variables_file = "./megapose_variables.json"
-with open(variables_file, "r") as f:
-    json_vars = json.load(f)
-    os.environ["MEGAPOSE_DIR"] = json_vars["megapose_dir"]
-    os.environ["MEGAPOSE_DATA_DIR"] = json_vars["megapose_data_dir"]
-
-if "HOME" not in os.environ:
-    os.environ["HOME"] = "."
-
-# Third Party
 import numpy as np
 import argparse
-import time
+import json
 import cv2
 import pandas as pd
 from pathlib import Path
@@ -38,6 +9,7 @@ from tqdm import tqdm
 import torch
 import torch.multiprocessing as mp
 from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Slerp
 
 # MegaPose Core
 from megapose.datasets.object_dataset import RigidObject, RigidObjectDataset

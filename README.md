@@ -66,6 +66,17 @@ For convenience, the MegaPose data directory can be changed by setting the envir
 ## 3. Install dependencies with conda or use the docker image
 We support running `megapose` either in a [`conda`](#conda-installation) environment or in a [`docker`](#docker-installation) container. For simplicity, we recommend using `conda` if you are not running on a cloud computer. Once you are done with the installation, you can head directly to the [inference tutorial](#inference-tutorial) or [dataset usage](#dataset).
 
+### Option 0: Pip Installation
+
+Here is a no-conda setup using Python venv and pip.
+
+```
+python -m venv .venv
+source .venv/bin/activate
+pip install -c constraints.txt -r requirements.txt
+pip install -e .
+```
+
 ### Option A: Conda Installation
 
 We will create a `conda` environment named `megapose` that contains all the dependencies, then install the `megapose` python package inside.
@@ -274,10 +285,12 @@ $MEGAPOSE_DATA_DIR/examples/barbecue-sauce/
 
 <img src="images/example/all_results.png" width="1000">
 
-# Video Inference
+# Realtime Video Inference
+Video inference has been added based on [ViSP Tutorial: Tracking with Megapose](https://visp-doc.inria.fr/doxygen/visp-daily/tutorial-tracking-megapose.html). One additional change here is to remove Bokeh + Selenium + Geckodriver visualization for simpler opencv visualization pipeline.
 ```bash
-python -m megapose.scripts.run_inference_on_video   --video ./local_data/examples/servo/video.mp4   --label "servo"   --camera-json ./local_data/examples/servo/camera_data.json   --meshes-directory ./local_data/examples/servo/meshes   --output-video final_tracked_servo.mp4
+python -m megapose.scripts.run_inference_on_video --video ./local_data/examples/servo/video.mp4 --label "servo" --camera-json ./local_data/examples/servo/camera_data.json --meshes-directory ./local_data/examples/servo/meshes --output-video ./reults/final_tracked_servo.mp4
 ```
+<img src="images/example/servo_tracking.png" width="1000">
 
 # Model Zoo
 

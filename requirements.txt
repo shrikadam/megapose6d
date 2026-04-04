@@ -38,17 +38,13 @@ scipy
 pypng
 h5py 
 seaborn
-# kornia 
 pyarrow 
 dt_apriltags 
 open3d
 structlog
 imageio
-# progressbar
 psutil
 webdataset
 opencv-contrib-python 
 roma 
 pin
-# torchnet
-# torchgeometry
