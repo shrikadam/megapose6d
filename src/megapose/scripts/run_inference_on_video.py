@@ -90,7 +90,7 @@ class VideoPoseEstimator:
 
         # VRAM OPTIMIZATION 2: Slash batch size and grid
         self.model.bsz_images = 16
-        self.model.load_SO3_grid(72)
+        self.model.load_SO3_grid(576) # Can be changed to 72, 512, 576, 4608
 
         torch.backends.cudnn.benchmark = True
         print(f"[DEBUG] --- Estimator Initialization Complete ---\n", flush=True)
@@ -232,7 +232,7 @@ if __name__ == "__main__":
 
     # Initialize Deep Learning Model
     estimator = VideoPoseEstimator(
-        "megapose-1.0-RGB", Path(args.meshes_directory).absolute(), num_workers=1
+        "megapose-1.0-RGB-multi-hypothesis", Path(args.meshes_directory).absolute(), num_workers=1
     )
 
     # Open Video
