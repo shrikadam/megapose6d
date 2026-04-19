@@ -46,8 +46,8 @@ def make_object_dataset(meshes_dir: Path) -> RigidObjectDataset:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MegaPose Template Debugger")
-    parser.add_argument("--label", type=str, required=True)
-    parser.add_argument("--meshes-directory", type=str, required=True)
+    parser.add_argument("--label", type=str, default="nic")
+    parser.add_argument("--meshes-directory", type=str, default="../local_data/examples/nic/meshes")
     parser.add_argument("--output", type=str, default="debug_templates.png")
     args = parser.parse_args()
 
@@ -63,6 +63,46 @@ if __name__ == "__main__":
 
     # MegaPose usually uses a flat ambient light for template matching
     light_datas = [Panda3dLightData(light_type="ambient", color=((1.0, 1.0, 1.0, 1)))]
+    # light_datas = [
+    #     # 1. Base ambient fill (Increased from 0.4 to 0.7 for brighter shadows)
+    #     Panda3dLightData(light_type="ambient", color=(0.7, 0.7, 0.7, 1.0)),
+    #     # 2. Top looking down (Increased from 0.8 to 1.0 max brightness)
+    #     Panda3dLightData(
+    #         light_type="directional",
+    #         color=(1.0, 1.0, 1.0, 1.0),
+    #         positioning_function=lambda root, light: light.setHpr(0, -90, 0),
+    #     ),
+    #     # 3. Bottom looking up (Increased from 0.4 to 0.6)
+    #     Panda3dLightData(
+    #         light_type="directional",
+    #         color=(0.6, 0.6, 0.6, 1.0),
+    #         positioning_function=lambda root, light: light.setHpr(0, 90, 0),
+    #     ),
+    #     # 4. Front looking back
+    #     Panda3dLightData(
+    #         light_type="directional",
+    #         color=(0.5, 0.5, 0.5, 1.0),
+    #         positioning_function=lambda root, light: light.setHpr(0, 0, 0),
+    #     ),
+    #     # 5. Back looking front
+    #     Panda3dLightData(
+    #         light_type="directional",
+    #         color=(0.5, 0.5, 0.5, 1.0),
+    #         positioning_function=lambda root, light: light.setHpr(180, 0, 0),
+    #     ),
+    #     # 6. Right looking left
+    #     Panda3dLightData(
+    #         light_type="directional",
+    #         color=(0.5, 0.5, 0.5, 1.0),
+    #         positioning_function=lambda root, light: light.setHpr(90, 0, 0),
+    #     ),
+    #     # 7. Left looking right
+    #     Panda3dLightData(
+    #         light_type="directional",
+    #         color=(0.5, 0.5, 0.5, 1.0),
+    #         positioning_function=lambda root, light: light.setHpr(-90, 0, 0),
+    #     ),
+    # ]
 
     print("[DEBUG] Generating 16 viewpoints...", flush=True)
     rendered_images = []
@@ -90,14 +130,18 @@ if __name__ == "__main__":
                 obj_datas,
                 [cam_data],
                 light_datas,
-                render_depth=False,
-                render_binary_mask=False,
+                render_depth=True,
+                render_binary_mask=True,
                 render_normals=False,
                 copy_arrays=True,
             )[0]
 
             # Convert RGB to BGR for OpenCV
             img_bgr = cv2.cvtColor(renderings.rgb, cv2.COLOR_RGB2BGR)
+
+            # Light grey BG instead of black
+            bg_mask = renderings.binary_mask == 0
+            img_bgr[bg_mask] = [200, 200, 200]
 
             # Add text so you know what angle you are looking at
             cv2.putText(
