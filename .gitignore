@@ -22,4 +22,4 @@ tmp/
 *tmp/
 tests.sh
 data
-hacks.txt
+oom_hack.txt

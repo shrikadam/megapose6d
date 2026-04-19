@@ -288,7 +288,8 @@ $MEGAPOSE_DATA_DIR/examples/barbecue-sauce/
 # Realtime Video Inference
 Video inference has been added based on [ViSP Tutorial: Tracking with Megapose](https://visp-doc.inria.fr/doxygen/visp-daily/tutorial-tracking-megapose.html). One additional change here is to remove Bokeh + Selenium + Geckodriver visualization for simpler opencv visualization pipeline.
 ```bash
-python -m megapose.scripts.run_inference_on_video --video ./local_data/examples/servo/video.mp4 --label "servo" --camera-json ./local_data/examples/servo/camera_data.json --meshes-directory ./local_data/examples/servo/meshes --output-video ./results/final_tracked_servo.mp4
+cd examples
+python run_inference_on_video.py --video ../local_data/examples/servo/video.mp4 --label "servo" --camera-json ../local_data/examples/servo/camera_data.json --meshes-directory ../local_data/examples/servo/meshes --output-video ../results/final_tracked_servo.mp4
 ```
 <img src="images/example/servo_tracking.png" width="1000">
 
