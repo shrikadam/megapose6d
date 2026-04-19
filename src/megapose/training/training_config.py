@@ -142,4 +142,4 @@ class TrainingConfig(omegaconf.dictconfig.DictConfig):
 
     # Infos
     global_batch_size: Optional[int] = None
-    hardware: HardwareConfig = HardwareConfig()
+    hardware: HardwareConfig = field(default_factory=HardwareConfig)
