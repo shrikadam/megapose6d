@@ -25,6 +25,9 @@ from megapose.panda3d_renderer import Panda3dLightData
 from megapose.panda3d_renderer.panda3d_scene_renderer import Panda3dSceneRenderer
 from megapose.utils.conversion import convert_scene_observation_to_panda3d
 
+from collections import deque
+import numpy as np
+
 # --- MAPPINGS ---
 TARGET_MAP = {"nic": "NIC_Target", "sc": "SC_Target"}
 
@@ -264,6 +267,9 @@ if __name__ == "__main__":
     smoothed_pose = None
     missed_frames = 0
 
+    # Store the last 5 confidence scores
+    score_history = deque(maxlen=5)
+
     print(f"\n[DEBUG] Starting Autonomous Video Loop ({total_frames} frames)...", flush=True)
     pbar = tqdm(total=total_frames)
 
@@ -306,12 +312,42 @@ if __name__ == "__main__":
             result = estimator.estimate_pose(
                 frame_rgb, args.target, current_bbox, K, previous_pose=last_known_pose
             )
-            last_known_pose = result["cTo"]
 
-            if smoothed_pose is None:
-                smoothed_pose = last_known_pose
+            raw_pose = result["cTo"]
+            current_score = result["score"]
+
+            # --- CONFIDENCE FILTERING LOGIC ---
+            score_history.append(current_score)
+
+            # Only calculate variance if the buffer is full (we have 5 frames of data)
+            if len(score_history) == score_history.maxlen:
+                score_variance = np.var(score_history)
+                score_mean = np.mean(score_history)
+
+                # TRIGGER: If average score is garbage OR variance is wildly oscillating
+                if score_mean < 0.40 or score_variance > 0.05:
+                    print(
+                        f"\n[WARNING] Tracking instability detected (Mean: {score_mean:.2f}, Var: {score_variance:.3f}). Forcing Coarse Reset!"
+                    )
+                    last_known_pose = None  # Force global Coarse search on next frame
+                    smoothed_pose = None
+                    score_history.clear()  # Reset the buffer
+                else:
+                    # Tracking is stable, update the known pose
+                    last_known_pose = raw_pose
             else:
-                smoothed_pose = smooth_pose(smoothed_pose, last_known_pose, alpha=0.4)
+                # Buffer is filling up, assume tracking is fine for now
+                last_known_pose = raw_pose
+
+            # Apply geometric smoothing (only if we didn't just reset)
+            if last_known_pose is not None:
+                if smoothed_pose is None:
+                    smoothed_pose = last_known_pose
+                else:
+                    smoothed_pose = smooth_pose(smoothed_pose, last_known_pose, alpha=0.4)
+            else:
+                # If we reset, just use the raw pose for this single frame's visualization
+                smoothed_pose = raw_pose
 
             # Render Overlays
             overlay_rgb = render_cad_overlay(frame_rgb, args.target, smoothed_pose, K, renderer)
