@@ -1,15 +1,9 @@
-# --extra-index-url https://download.pytorch.org/whl/cu113
-# torch==1.11.0+cu113 
-# torchvision==0.12.0+cu113 
-# torchaudio==0.11.0
-
+torch
+torchvision
 pytz
 joblib
 ipython
 ipykernel
-jupyterlab
-notebook
-jupyter_contrib_nbextensions
 rclone
 pillow
 ipywidgets
@@ -18,6 +12,7 @@ omegaconf
 simplejson
 line_profiler 
 opencv-python
+opencv-contrib-python 
 tqdm
 lxml
 transforms3d
@@ -36,13 +31,12 @@ scipy
 pypng
 h5py 
 seaborn
-pyarrow 
-dt_apriltags 
+pyarrow  
 open3d
 structlog
 imageio
 psutil
 webdataset
-opencv-contrib-python 
 roma 
 pin
+ultralytics
