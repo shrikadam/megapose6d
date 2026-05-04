@@ -29,7 +29,7 @@ NAMED_MODELS = {
         "refiner_run_id": "refiner-rgb-653307694",
         "requires_depth": False,
         "inference_parameters": {
-            "n_refiner_iterations": 5,
+            "n_refiner_iterations": 10,
             "n_pose_hypotheses": 5,
         },
     },
