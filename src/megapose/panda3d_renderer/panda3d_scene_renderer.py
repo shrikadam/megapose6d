@@ -70,6 +70,7 @@ class App(ShowBase):
             "texture-anisotropic-degree 16\n"
             "framebuffer-multisample 1\n"
             "multisamples 4\n"
+            "framebuffer-srgb true\n"
             "background-color 0.0 0.0 0.0 0.0\n"
             "load-file-type p3assimp\n"
             "track-memory-usage 1\n"
@@ -202,6 +203,7 @@ class Panda3dSceneRenderer:
         node.setScale(scale)
         node.setPos(0, 0, 0)
         node.setHpr(y, p, r)
+
         self._label_to_node[label] = node
         return node
 
