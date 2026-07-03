@@ -1,3 +1,4 @@
+import sys
 import numpy as np
 import argparse
 import json
@@ -88,9 +89,11 @@ class VideoPoseEstimator:
         )
         self.model.eval()
 
-        # VRAM OPTIMIZATION 2: Slash batch size and grid
-        self.model.bsz_images = 16
-        self.model.load_SO3_grid(576) # Can be changed to 72, 512, 576, 4608
+        self.model.bsz_images = 128
+        self.model.bsz_objects = 8
+        self.model.load_SO3_grid(
+            576
+        )
 
         torch.backends.cudnn.benchmark = True
         print(f"[DEBUG] --- Estimator Initialization Complete ---\n", flush=True)
@@ -331,4 +334,16 @@ if __name__ == "__main__":
     pbar.close()
     cap.release()
     out_vid.release()
+
     print(f"\n[SUCCESS] Saved tracked video to {args.output_video}")
+
+    # --- CLEAN SHUTDOWN ---
+    print("\n[DEBUG] Shutting down background rendering processes...", flush=True)
+
+    # 1. Deleting these objects triggers their internal __del__ methods,
+    # which safely terminates the PyTorch multiprocessing queues.
+    del estimator
+    del renderer
+
+    # 2. Force the main process to exit, bypassing any lingering zombie threads
+    sys.exit(0)

@@ -337,7 +337,7 @@ def make_points(vertices, colors=None, texture_coords=None, geom=None):
             )
         )
 
-    data = vertices.tostring()
+    data = vertices.tobytes()
 
     if geom is None:
         if vertices.strides[0] == 12:

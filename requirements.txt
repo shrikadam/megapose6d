@@ -39,4 +39,3 @@ psutil
 webdataset
 roma 
 pin
-ultralytics

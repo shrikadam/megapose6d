@@ -53,7 +53,9 @@ def _get_views_TCO_pos_sphere(TCO, tCR, cam_positions_wrt_cam0):
     ref = NodePath("reference_point")
     ref.reparentTo(root)
     tWR = TOC[:3, :3] @ tCR.reshape((3, 1)) + TOC[:3, [-1]]
-    ref.setPos(*tWR[:3])
+    # Flatten the array first to make sure it's 1D, then convert to native scalars
+    tWR_flat = tWR.flatten()
+    ref.setPos(tWR_flat[0].item(), tWR_flat[1].item(), tWR_flat[2].item())
 
     radius = np.linalg.norm(np.array(tCR)[:3])
     cam_positions_wrt_cam0 = cam_positions_wrt_cam0 * radius
