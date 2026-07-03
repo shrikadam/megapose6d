@@ -1,4 +1,5 @@
 import sys
+import time
 import numpy as np
 import argparse
 import json
@@ -88,6 +89,7 @@ class VideoPoseEstimator:
             load_named_model(model_name, self.object_dataset, n_workers=num_workers).cuda(),
         )
         self.model.eval()
+        self.model = self.model.half()
 
         self.model.bsz_images = 128
         self.model.bsz_objects = 8
@@ -283,6 +285,8 @@ if __name__ == "__main__":
     print(f"\n[DEBUG] Starting Main Video Loop ({total_frames} frames)...", flush=True)
     pbar = tqdm(total=total_frames)
 
+    prev_time = time.time()
+
     while True:
         ret, frame_bgr = cap.read()
         if not ret:
@@ -325,6 +329,22 @@ if __name__ == "__main__":
             final_frame_bgr, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (0, 0, 255), 2
         )
         final_frame_bgr = draw_pose_text(final_frame_bgr, smoothed_pose, result["score"])
+
+        # --- FPS CALCULATION & HUD ---
+        curr_time = time.time()
+        fps_val = 1.0 / (curr_time - prev_time)
+        prev_time = curr_time
+        
+        # Draw in the top right corner (assuming 'width' is defined from your video cap)
+        cv2.putText(
+            final_frame_bgr, 
+            f"FPS: {fps_val:.1f}", 
+            (width - 160, 40), 
+            cv2.FONT_HERSHEY_SIMPLEX, 
+            1, 
+            (0, 255, 255), # Yellow text
+            2
+        )
 
         # Save & Iterate
         out_vid.write(final_frame_bgr)
