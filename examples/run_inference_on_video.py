@@ -6,6 +6,7 @@ import json
 import cv2
 import pandas as pd
 from pathlib import Path
+from collections import deque
 from typing import Dict, List, Optional
 from tqdm import tqdm
 import torch
@@ -91,10 +92,10 @@ class VideoPoseEstimator:
         self.model.eval()
         self.model = self.model.half()
 
-        self.model.bsz_images = 128
-        self.model.bsz_objects = 8
+        self.model.bsz_images = 32
+        self.model.bsz_objects = 4
         self.model.load_SO3_grid(
-            576
+            72
         )
 
         torch.backends.cudnn.benchmark = True
@@ -107,18 +108,27 @@ class VideoPoseEstimator:
         bbox: List[float],
         K: np.ndarray,
         previous_pose: Optional[List[List[float]]] = None,
+        n_hypotheses: int = 2,  
+        n_iterations: int = 5   
     ):
+        # 1. Prepare Camera & Observation Tensor natively
         h, w = img_np.shape[:2]
         c = CameraData()
         c.K, c.resolution, c.z_near, c.z_far = K, (h, w), 0.001, 100000
-
+        
         observation = ObservationTensor.from_numpy(img_np, None, c.K).cuda()
 
+        # 2. Prepare Bounding Box Detections
         obj_data = ObjectData(label)
         obj_data.bbox_modal = np.array(bbox, dtype=np.float32)
         detections = make_detections_from_object_data([obj_data]).cuda()
 
-        # FAST TRACKING LOGIC: Bypass Coarse network if we have a previous pose
+        # 3. Pull default params, inject dynamic gearbox params
+        inference_params = self.model_info["inference_parameters"].copy()
+        inference_params["n_pose_hypotheses"] = n_hypotheses
+        inference_params["n_refiner_iterations"] = n_iterations
+
+        # 4. FAST TRACKING LOGIC: Bypass Coarse network if we have a previous pose
         coarse_estimates = None
         if previous_pose is not None:
             cTos_np = np.array([previous_pose]).reshape(-1, 4, 4)
@@ -128,10 +138,8 @@ class VideoPoseEstimator:
             )
             coarse_estimates = PoseEstimatesType(infos, poses=tensor)
 
-        inference_params = self.model_info["inference_parameters"].copy()
-
-        # VRAM OPTIMIZATION 3: Mixed Precision (FP16)
-        with torch.autocast(device_type="cuda", dtype=torch.float16):
+        # 5. Run the Refiner
+        with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.float16):
             output, _ = self.model.run_inference_pipeline(
                 observation,
                 detections=detections,
@@ -139,6 +147,7 @@ class VideoPoseEstimator:
                 **inference_params,
             )
 
+        # 6. Extract results
         pose = output.poses[0].cpu().numpy().reshape(4, 4).tolist()
         score = float(output.infos["pose_score"].iloc[0])
 
@@ -176,7 +185,7 @@ def render_cad_overlay(
     blended_img = frame_rgb.copy()
     alpha = 0.75
     blended_img[mask] = (frame_rgb[mask] * (1 - alpha) + cad_rgb[mask] * alpha).astype(np.uint8)
-    return blended_img
+    return blended_img, mask
 
 
 def draw_pose_text(frame_bgr: np.ndarray, pose: List[List[float]], score: float) -> np.ndarray:
@@ -277,10 +286,11 @@ if __name__ == "__main__":
     # 3. Setup Video Writer & 2D Tracker
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out_vid = cv2.VideoWriter(args.output_video, fourcc, fps, (width, height))
-    tracker = cv2.TrackerCSRT_create()
 
     frame_idx = 0
     last_known_pose = None
+    smoothed_pose = None
+    score_history = deque(maxlen=5)
 
     print(f"\n[DEBUG] Starting Main Video Loop ({total_frames} frames)...", flush=True)
     pbar = tqdm(total=total_frames)
@@ -294,40 +304,98 @@ if __name__ == "__main__":
 
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
 
-        # 2D Tracking Update
-        if frame_idx == 0:
-            tracker.init(frame_bgr, init_tracker_bbox)
-        else:
-            success, box = tracker.update(frame_bgr)
-            if success:
-                x, y, w, h = [int(v) for v in box]
-                current_bbox = [x, y, x + w, y + h]
-            else:
-                last_known_pose = None  # Tracking lost, force a global search
+        n_hypotheses = 2
+        n_iterations = 5
+        
+        # GEARBOX TRIGGER: If we are actively tracking, we already solved 
+        # global orientation symmetry, so we drop hypotheses to 1 immediately.
+        if last_known_pose is not None:
+            n_hypotheses = 1
+            
+            # Check if our confidence history buffer is full and perfectly stable
+            if len(score_history) == score_history.maxlen:
+                score_variance = np.var(score_history)
+                score_mean = np.mean(score_history)
+                
+                # If the tracking is highly confident and rock-solid steady, 
+                # drop refiner iterations to 2 to maximize frame rate.
+                if score_mean >= 0.50 and score_variance <= 0.02:
+                    n_iterations = 2
 
-        # 3D Inference
+        # Run inference with our dynamically assigned values
         result = estimator.estimate_pose(
-            frame_rgb, args.label, current_bbox, K, previous_pose=last_known_pose
+            frame_rgb, 
+            args.label, 
+            current_bbox, 
+            K, 
+            previous_pose=last_known_pose,
+            n_hypotheses=n_hypotheses,
+            n_iterations=n_iterations
         )
-        last_known_pose = result["cTo"]
-
-        # --- APPLY FILTER ---
-        if frame_idx == 0 or not success:
-            # If it's the first frame or tracking was lost, snap directly to the raw pose
-            smoothed_pose = last_known_pose
+        
+        raw_pose = result["cTo"]
+        current_score = result["score"]
+        
+        # --- CONFIDENCE FILTERING & RESET LOGIC ---
+        score_history.append(current_score)
+        
+        if len(score_history) == score_history.maxlen:
+            score_variance = np.var(score_history)
+            score_mean = np.mean(score_history)
+            
+            # TRIGGER: If tracking fails or oscillates wildly, drop everything
+            if score_mean < 0.40 or score_variance > 0.05:
+                print(f"\n[WARNING] Instability detected (Mean: {score_mean:.2f}, Var: {score_variance:.3f}). Forcing Coarse Reset!")
+                last_known_pose = None 
+                smoothed_pose = None
+                score_history.clear() 
+            else:
+                last_known_pose = raw_pose
         else:
-            # Otherwise, blend the previous smoothed pose with the new raw pose
-            smoothed_pose = smooth_pose(smoothed_pose, last_known_pose, alpha=0.4)
+            last_known_pose = raw_pose
+
+        # Apply geometric smoothing (only if we didn't just reset)
+        if last_known_pose is not None:
+            if smoothed_pose is None:
+                smoothed_pose = last_known_pose
+            else:
+                smoothed_pose = smooth_pose(smoothed_pose, last_known_pose, alpha=0.4)
+        else:
+            smoothed_pose = raw_pose
 
         # --- VISUALIZATION PIPELINE (Using Smoothed Pose) ---
-        overlay_rgb = render_cad_overlay(frame_rgb, args.label, smoothed_pose, K, renderer)
+        # Catch the mask returned by the renderer
+        overlay_rgb, mask = render_cad_overlay(frame_rgb, args.label, smoothed_pose, K, renderer)
         final_frame_bgr = cv2.cvtColor(overlay_rgb, cv2.COLOR_RGB2BGR)
         final_frame_bgr = draw_3d_axes(final_frame_bgr, smoothed_pose, K)
 
-        xmin, ymin, xmax, ymax = current_bbox
-        cv2.rectangle(
-            final_frame_bgr, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (0, 0, 255), 2
-        )
+        # --- CLOSED-LOOP BOUNDING BOX ---
+        # Find all the X and Y pixel coordinates where the Panda3D mask exists
+        y_indices, x_indices = np.where(mask)
+        
+        if len(x_indices) > 0:
+            xmin, xmax = np.min(x_indices), np.max(x_indices)
+            ymin, ymax = np.min(y_indices), np.max(y_indices)
+            
+            # Add a small 10-pixel padding so MegaPose has context for the next frame
+            pad = 10
+            current_bbox = [
+                max(0, xmin - pad), 
+                max(0, ymin - pad), 
+                min(width, xmax + pad), 
+                min(height, ymax + pad)
+            ]
+            
+            # Draw the mathematically perfect bounding box
+            cv2.rectangle(
+                final_frame_bgr, (int(current_bbox[0]), int(current_bbox[1])), 
+                (int(current_bbox[2]), int(current_bbox[3])), (0, 0, 255), 2
+            )
+        else:
+            # If the mask is empty, tracking failed completely. 
+            last_known_pose = None
+        
+        # --- XYZWPR POSE ---
         final_frame_bgr = draw_pose_text(final_frame_bgr, smoothed_pose, result["score"])
 
         # --- FPS CALCULATION & HUD ---
