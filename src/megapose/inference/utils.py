@@ -101,30 +101,35 @@ def load_pose_models(
     mesh_db = MeshDataBase.from_object_ds(object_dataset)
     logger.debug("Done creating MeshDatabase")
 
-    def make_renderer(renderer_type: str) -> Panda3dBatchRenderer:
-        logger.debug("renderer_kwargs", renderer_kwargs)
-        if renderer_kwargs is None:
-            renderer_kwargs_ = dict()
-        else:
-            renderer_kwargs_ = renderer_kwargs
+    mesh_db_batched = mesh_db.batched().cuda()
 
-        renderer_kwargs_.setdefault("split_objects", True)
-        renderer_kwargs_.setdefault("preload_cache", False)
-        renderer_kwargs_.setdefault("n_workers", 4)
+    # def make_renderer(renderer_type: str) -> Panda3dBatchRenderer:
+    #     logger.debug("renderer_kwargs", renderer_kwargs)
+    #     if renderer_kwargs is None:
+    #         renderer_kwargs_ = dict()
+    #     else:
+    #         renderer_kwargs_ = renderer_kwargs
 
-        if renderer_type == "panda3d" or force_panda3d_renderer:
-            renderer = Panda3dBatchRenderer(object_dataset=object_dataset, **renderer_kwargs_)
-        else:
-            raise ValueError(renderer_type)
-        return renderer
+    #     renderer_kwargs_.setdefault("split_objects", True)
+    #     renderer_kwargs_.setdefault("preload_cache", False)
+    #     renderer_kwargs_.setdefault("n_workers", 4)
+
+    #     if renderer_type == "panda3d" or force_panda3d_renderer:
+    #         renderer = Panda3dBatchRenderer(object_dataset=object_dataset, **renderer_kwargs_)
+    #     else:
+    #         raise ValueError(renderer_type)
+    #     return renderer
+
+    def make_renderer(renderer_type: str):
+        from megapose.nvdiffrast.nvdiffrast_renderer import NvdiffrastSceneRenderer
+        # Pass the raw object dataset instead so we can access the file paths!
+        return NvdiffrastSceneRenderer(object_dataset=object_dataset)
 
     coarse_renderer = make_renderer(coarse_cfg.renderer)
     if refiner_cfg.renderer == coarse_cfg.renderer:
         refiner_renderer = coarse_renderer
     else:
         refiner_renderer = make_renderer(refiner_cfg.renderer)
-
-    mesh_db_batched = mesh_db.batched().cuda()
 
     def load_model(run_id: str, renderer: Panda3dBatchRenderer) -> PosePredictor:
         if run_id is None:
