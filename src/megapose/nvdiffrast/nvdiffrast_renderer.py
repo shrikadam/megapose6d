@@ -19,18 +19,30 @@ class NvdiffrastSceneRenderer:
         self.vertex_colors = {}
 
     def _get_opengl_projection_matrix(self, K, h, w, z_near=0.01, z_far=10.0):
-        # ... (keep your existing projection matrix code here) ...
+        """
+        Correctly maps OpenCV Camera Coordinates (Z-forward, Y-down) 
+        to Hardware NDC (Normalized Device Coordinates).
+        """
         fx, fy = K[0, 0], K[1, 1]
         cx, cy = K[0, 2], K[1, 2]
         
         P = torch.zeros((4, 4), dtype=torch.float32, device="cuda")
+        
+        # X-axis: Map [0, w] to [-1, 1]
         P[0, 0] = 2.0 * fx / w
-        P[1, 1] = 2.0 * fy / h
-        P[0, 2] = 1.0 - 2.0 * cx / w
-        P[1, 2] = 2.0 * cy / h - 1.0
-        P[2, 2] = -(z_far + z_near) / (z_far - z_near)
+        P[0, 2] = 2.0 * cx / w - 1.0
+        
+        # Y-axis: Map [0, h] to [1, -1] (We invert Y here because OpenCV Y is Down, NDC Y is Up)
+        P[1, 1] = -2.0 * fy / h
+        P[1, 2] = 1.0 - 2.0 * cy / h
+        
+        # Z-axis: Map [z_near, z_far] to [-1, 1]
+        P[2, 2] = (z_far + z_near) / (z_far - z_near)
         P[2, 3] = -2.0 * z_far * z_near / (z_far - z_near)
-        P[3, 2] = -1.0
+        
+        # W-axis: Set W = Z. (OpenCV Z is already positive forward!)
+        P[3, 2] = 1.0
+        
         return P
 
     def render_scene(

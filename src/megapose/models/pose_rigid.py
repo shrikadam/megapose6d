@@ -506,6 +506,42 @@ class PosePredictor(nn.Module):
         
         n_channels = renders.shape[1]
         renders = renders.view(bsz, n_views, n_channels, *renders.shape[-2:]).flatten(1, 2)
+
+        import os
+        import torchvision
+        import sys
+
+        debug_dir = "debug_tensors"
+        os.makedirs(debug_dir, exist_ok=True)
+        
+        # renders shape: [B, n_channels, H, W]
+        # Channels 0-3: RGB, Channels 3-6: Normals, Channels 6-7: Depth
+        
+        print("\n[DEBUG] --- TENSOR STATISTICS ---")
+        
+        # 1. Dump RGB (Channels 0, 1, 2)
+        rgb_tensor = renders[0, 0:3]
+        print(f"RGB     | Min: {rgb_tensor.min():.4f}, Max: {rgb_tensor.max():.4f}")
+        torchvision.utils.save_image(rgb_tensor, f"{debug_dir}/1_rgb.png")
+
+        # 2. Dump Normals (Channels 3, 4, 5)
+        if self.render_normals and renders.shape[1] >= 6:
+            norm_tensor = renders[0, 3:6]
+            print(f"Normals | Min: {norm_tensor.min():.4f}, Max: {norm_tensor.max():.4f}")
+            torchvision.utils.save_image(norm_tensor, f"{debug_dir}/2_normals.png")
+
+        # 3. Dump Depth (Channel 6)
+        if self.render_depth and renders.shape[1] >= 7:
+            depth_tensor = renders[0, 6:7]
+            print(f"Depth   | Min: {depth_tensor.min():.4f}, Max: {depth_tensor.max():.4f}")
+            # Normalize depth [0, 1] purely for human visualization
+            depth_vis = (depth_tensor - depth_tensor.min()) / (depth_tensor.max() - depth_tensor.min() + 1e-6)
+            torchvision.utils.save_image(depth_vis, f"{debug_dir}/3_depth.png")
+
+        print(f"[DEBUG] Successfully dumped tensors to ./{debug_dir}/")
+        print("[DEBUG] Halting execution for inspection.")
+        sys.exit(0)  # Kill the script immediately after the first pass
+        # ---------------------------------------------
         
         return renders  # [bsz, n_views*n_channels, H, W]
 
