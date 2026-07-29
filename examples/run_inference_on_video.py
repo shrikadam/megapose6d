@@ -8,6 +8,7 @@ import cv2
 import pandas as pd
 from pathlib import Path
 from collections import deque
+import contextlib
 from typing import Dict, List, Optional
 from tqdm import tqdm
 import torch
@@ -240,6 +241,7 @@ if __name__ == "__main__":
     # Keep these as optional overrides just in case you ever need to deviate from the standard path
     parser.add_argument("--base-data-dir", type=str, default="../local_data/examples")
     parser.add_argument("--base-output-dir", type=str, default="../results")
+    parser.add_argument("--profile", action="store_true",help="Run in profiling mode (limits to 10 frames for trace capture)")
 
     args = parser.parse_args()
 
@@ -318,19 +320,25 @@ if __name__ == "__main__":
     pbar = tqdm(total=total_frames)
 
     prev_time = time.time()
+    frame_idx = 0
 
-    with profile(
-        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        # 2 wait + 2 warmup + 5 active = 9 frames required!
-        schedule=torch.profiler.schedule(wait=2, warmup=2, active=5, repeat=1),
-        on_trace_ready=torch.profiler.tensorboard_trace_handler('./profiler_logs'),
-        record_shapes=True,
-        profile_memory=True,
-        with_stack=True
-    ) as prof:
+    # --- CONDITIONAL PROFILER SETUP ---
+    if args.profile:
+        print("\n[INFO] Profiling Mode ACTIVE. Limiting to 10 frames.", flush=True)
+        profiler_ctx = profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            schedule=torch.profiler.schedule(wait=2, warmup=2, active=5, repeat=1),
+            on_trace_ready=torch.profiler.tensorboard_trace_handler('./profiler_logs'),
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=True
+        )
+    else:
+        # A nullcontext does absolutely nothing, acting as a passthrough for standard inference
+        profiler_ctx = contextlib.nullcontext()
 
-        frame_idx = 0
-
+    # Apply whichever context we selected above
+    with profiler_ctx as prof:
         while True:
             ret, frame_bgr = cap.read()
             if not ret:
@@ -339,7 +347,7 @@ if __name__ == "__main__":
             with record_function("FULL_FRAME_PIPELINE"):
 
                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-
+                
                 n_hypotheses = 2
                 n_iterations = 5
                 
@@ -455,14 +463,13 @@ if __name__ == "__main__":
                 frame_idx += 1
                 pbar.update(1)
 
-            prof.step()
-            
-            frame_idx += 1
-            
-            # 3. Let it run for exactly 10 frames to ensure the 9-frame schedule finishes safely.
-            if frame_idx >= 10:
-                print(f"[INFO] Captured {frame_idx} frames. Breaking loop to save trace...")
-                break
+            # --- PROFILING EARLY BREAK & STEP ---
+            if args.profile:
+                prof.step()
+                # Let it run for exactly 10 frames to ensure the 9-frame schedule finishes safely.
+                if frame_idx >= 10:
+                    print(f"\n[INFO] Captured {frame_idx} frames. Breaking loop to save trace...")
+                    break
 
     pbar.close()
     cap.release()
@@ -472,11 +479,6 @@ if __name__ == "__main__":
 
     # --- CLEAN SHUTDOWN ---
     print("\n[DEBUG] Shutting down background rendering processes...", flush=True)
-
-    # 1. Deleting these objects triggers their internal __del__ methods,
-    # which safely terminates the PyTorch multiprocessing queues.
     del estimator
     del renderer
-
-    # 2. Force the main process to exit, bypassing any lingering zombie threads
     sys.exit(0)
