@@ -8,10 +8,12 @@ import cv2
 import pandas as pd
 from pathlib import Path
 from collections import deque
+import contextlib
 from typing import Dict, List, Optional
 from tqdm import tqdm
 import torch
 import torch.multiprocessing as mp
+from torch.profiler import profile, record_function, ProfilerActivity
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
 
@@ -28,6 +30,7 @@ from megapose.panda3d_renderer import Panda3dLightData
 from megapose.panda3d_renderer.panda3d_scene_renderer import Panda3dSceneRenderer
 from megapose.utils.conversion import convert_scene_observation_to_panda3d
 
+os.makedirs('./profiler_logs', exist_ok=True)
 
 def make_object_dataset(meshes_dir: Path) -> RigidObjectDataset:
     print("[DEBUG] Initializing Object Dataset from meshes...", flush=True)
@@ -238,6 +241,7 @@ if __name__ == "__main__":
     # Keep these as optional overrides just in case you ever need to deviate from the standard path
     parser.add_argument("--base-data-dir", type=str, default="../local_data/examples")
     parser.add_argument("--base-output-dir", type=str, default="../results")
+    parser.add_argument("--profile", action="store_true",help="Run in profiling mode (limits to 10 frames for trace capture)")
 
     args = parser.parse_args()
 
@@ -316,128 +320,156 @@ if __name__ == "__main__":
     pbar = tqdm(total=total_frames)
 
     prev_time = time.time()
+    frame_idx = 0
 
-    while True:
-        ret, frame_bgr = cap.read()
-        if not ret:
-            break
+    # --- CONDITIONAL PROFILER SETUP ---
+    if args.profile:
+        print("\n[INFO] Profiling Mode ACTIVE. Limiting to 10 frames.", flush=True)
+        profiler_ctx = profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            schedule=torch.profiler.schedule(wait=2, warmup=2, active=5, repeat=1),
+            on_trace_ready=torch.profiler.tensorboard_trace_handler('./profiler_logs'),
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=True
+        )
+    else:
+        # A nullcontext does absolutely nothing, acting as a passthrough for standard inference
+        profiler_ctx = contextlib.nullcontext()
 
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    # Apply whichever context we selected above
+    with profiler_ctx as prof:
+        while True:
+            ret, frame_bgr = cap.read()
+            if not ret:
+                break
 
-        n_hypotheses = 2
-        n_iterations = 5
-        
-        # GEARBOX TRIGGER: If we are actively tracking, we already solved 
-        # global orientation symmetry, so we drop hypotheses to 1 immediately.
-        if last_known_pose is not None:
-            n_hypotheses = 1
-            
-            # Check if our confidence history buffer is full and perfectly stable
-            if len(score_history) == score_history.maxlen:
-                score_variance = np.var(score_history)
-                score_mean = np.mean(score_history)
+            with record_function("FULL_FRAME_PIPELINE"):
+
+                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 
-                # If the tracking is highly confident and rock-solid steady, 
-                # drop refiner iterations to 2 to maximize frame rate.
-                if score_mean >= 0.50 and score_variance <= 0.02:
-                    n_iterations = 2
+                n_hypotheses = 2
+                n_iterations = 5
+                
+                # GEARBOX TRIGGER: If we are actively tracking, we already solved 
+                # global orientation symmetry, so we drop hypotheses to 1 immediately.
+                if last_known_pose is not None:
+                    n_hypotheses = 1
+                    
+                    # Check if our confidence history buffer is full and perfectly stable
+                    if len(score_history) == score_history.maxlen:
+                        score_variance = np.var(score_history)
+                        score_mean = np.mean(score_history)
+                        
+                        # If the tracking is highly confident and rock-solid steady, 
+                        # drop refiner iterations to 2 to maximize frame rate.
+                        if score_mean >= 0.50 and score_variance <= 0.02:
+                            n_iterations = 2
 
-        # Run inference with our dynamically assigned values
-        result = estimator.estimate_pose(
-            frame_rgb, 
-            args.label, 
-            current_bbox, 
-            K, 
-            previous_pose=last_known_pose,
-            n_hypotheses=n_hypotheses,
-            n_iterations=n_iterations
-        )
-        
-        raw_pose = result["cTo"]
-        current_score = result["score"]
-        
-        # --- CONFIDENCE FILTERING & RESET LOGIC ---
-        score_history.append(current_score)
-        
-        if len(score_history) == score_history.maxlen:
-            score_variance = np.var(score_history)
-            score_mean = np.mean(score_history)
-            
-            # TRIGGER: If tracking fails or oscillates wildly, drop everything
-            if score_mean < 0.40 or score_variance > 0.05:
-                print(f"\n[WARNING] Instability detected (Mean: {score_mean:.2f}, Var: {score_variance:.3f}). Forcing Coarse Reset!")
-                last_known_pose = None 
-                smoothed_pose = None
-                score_history.clear() 
-            else:
-                last_known_pose = raw_pose
-        else:
-            last_known_pose = raw_pose
+                # Run inference with our dynamically assigned values
+                result = estimator.estimate_pose(
+                    frame_rgb, 
+                    args.label, 
+                    current_bbox, 
+                    K, 
+                    previous_pose=last_known_pose,
+                    n_hypotheses=n_hypotheses,
+                    n_iterations=n_iterations
+                )
+                
+                raw_pose = result["cTo"]
+                current_score = result["score"]
+                
+                # --- CONFIDENCE FILTERING & RESET LOGIC ---
+                score_history.append(current_score)
+                
+                if len(score_history) == score_history.maxlen:
+                    score_variance = np.var(score_history)
+                    score_mean = np.mean(score_history)
+                    
+                    # TRIGGER: If tracking fails or oscillates wildly, drop everything
+                    if score_mean < 0.40 or score_variance > 0.05:
+                        print(f"\n[WARNING] Instability detected (Mean: {score_mean:.2f}, Var: {score_variance:.3f}). Forcing Coarse Reset!")
+                        last_known_pose = None 
+                        smoothed_pose = None
+                        score_history.clear() 
+                    else:
+                        last_known_pose = raw_pose
+                else:
+                    last_known_pose = raw_pose
 
-        # Apply geometric smoothing (only if we didn't just reset)
-        if last_known_pose is not None:
-            if smoothed_pose is None:
-                smoothed_pose = last_known_pose
-            else:
-                smoothed_pose = smooth_pose(smoothed_pose, last_known_pose, alpha=0.4)
-        else:
-            smoothed_pose = raw_pose
+                # Apply geometric smoothing (only if we didn't just reset)
+                if last_known_pose is not None:
+                    if smoothed_pose is None:
+                        smoothed_pose = last_known_pose
+                    else:
+                        smoothed_pose = smooth_pose(smoothed_pose, last_known_pose, alpha=0.4)
+                else:
+                    smoothed_pose = raw_pose
 
-        # --- VISUALIZATION PIPELINE (Using Smoothed Pose) ---
-        # Catch the mask returned by the renderer
-        overlay_rgb, mask = render_cad_overlay(frame_rgb, args.label, smoothed_pose, K, renderer)
-        final_frame_bgr = cv2.cvtColor(overlay_rgb, cv2.COLOR_RGB2BGR)
-        final_frame_bgr = draw_3d_axes(final_frame_bgr, smoothed_pose, K)
+                # --- VISUALIZATION PIPELINE (Using Smoothed Pose) ---
+                # Catch the mask returned by the renderer
+                overlay_rgb, mask = render_cad_overlay(frame_rgb, args.label, smoothed_pose, K, renderer)
+                final_frame_bgr = cv2.cvtColor(overlay_rgb, cv2.COLOR_RGB2BGR)
+                final_frame_bgr = draw_3d_axes(final_frame_bgr, smoothed_pose, K)
 
-        # --- CLOSED-LOOP BOUNDING BOX ---
-        # Find all the X and Y pixel coordinates where the Panda3D mask exists
-        y_indices, x_indices = np.where(mask)
-        
-        if len(x_indices) > 0:
-            xmin, xmax = np.min(x_indices), np.max(x_indices)
-            ymin, ymax = np.min(y_indices), np.max(y_indices)
-            
-            # Add a small 10-pixel padding so MegaPose has context for the next frame
-            pad = 10
-            current_bbox = [
-                max(0, xmin - pad), 
-                max(0, ymin - pad), 
-                min(width, xmax + pad), 
-                min(height, ymax + pad)
-            ]
-            
-            # Draw the mathematically perfect bounding box
-            cv2.rectangle(
-                final_frame_bgr, (int(current_bbox[0]), int(current_bbox[1])), 
-                (int(current_bbox[2]), int(current_bbox[3])), (0, 0, 255), 2
-            )
-        else:
-            # If the mask is empty, tracking failed completely. 
-            last_known_pose = None
-        
-        # --- XYZWPR POSE ---
-        final_frame_bgr = draw_pose_text(final_frame_bgr, smoothed_pose, result["score"])
+                # --- CLOSED-LOOP BOUNDING BOX ---
+                # Find all the X and Y pixel coordinates where the Panda3D mask exists
+                y_indices, x_indices = np.where(mask)
+                
+                if len(x_indices) > 0:
+                    xmin, xmax = np.min(x_indices), np.max(x_indices)
+                    ymin, ymax = np.min(y_indices), np.max(y_indices)
+                    
+                    # Add a small 10-pixel padding so MegaPose has context for the next frame
+                    pad = 10
+                    current_bbox = [
+                        max(0, xmin - pad), 
+                        max(0, ymin - pad), 
+                        min(width, xmax + pad), 
+                        min(height, ymax + pad)
+                    ]
+                    
+                    # Draw the mathematically perfect bounding box
+                    cv2.rectangle(
+                        final_frame_bgr, (int(current_bbox[0]), int(current_bbox[1])), 
+                        (int(current_bbox[2]), int(current_bbox[3])), (0, 0, 255), 2
+                    )
+                else:
+                    # If the mask is empty, tracking failed completely. 
+                    last_known_pose = None
+                
+                # --- XYZWPR POSE ---
+                final_frame_bgr = draw_pose_text(final_frame_bgr, smoothed_pose, result["score"])
 
-        # --- FPS CALCULATION & HUD ---
-        curr_time = time.time()
-        fps_val = 1.0 / (curr_time - prev_time)
-        prev_time = curr_time
-        
-        # Draw in the top right corner (assuming 'width' is defined from your video cap)
-        cv2.putText(
-            final_frame_bgr, 
-            f"FPS: {fps_val:.1f}", 
-            (width - 160, 40), 
-            cv2.FONT_HERSHEY_SIMPLEX, 
-            1, 
-            (0, 255, 255), # Yellow text
-            2
-        )
+                # --- FPS CALCULATION & HUD ---
+                curr_time = time.time()
+                fps_val = 1.0 / (curr_time - prev_time)
+                prev_time = curr_time
+                
+                # Draw in the top right corner (assuming 'width' is defined from your video cap)
+                cv2.putText(
+                    final_frame_bgr, 
+                    f"FPS: {fps_val:.1f}", 
+                    (width - 160, 40), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 
+                    1, 
+                    (0, 255, 255), # Yellow text
+                    2
+                )
 
-        # Save & Iterate
-        out_vid.write(final_frame_bgr)
-        frame_idx += 1
-        pbar.update(1)
+                # Save & Iterate
+                out_vid.write(final_frame_bgr)
+                frame_idx += 1
+                pbar.update(1)
+
+            # --- PROFILING EARLY BREAK & STEP ---
+            if args.profile:
+                prof.step()
+                # Let it run for exactly 10 frames to ensure the 9-frame schedule finishes safely.
+                if frame_idx >= 10:
+                    print(f"\n[INFO] Captured {frame_idx} frames. Breaking loop to save trace...")
+                    break
 
     pbar.close()
     cap.release()
@@ -447,11 +479,6 @@ if __name__ == "__main__":
 
     # --- CLEAN SHUTDOWN ---
     print("\n[DEBUG] Shutting down background rendering processes...", flush=True)
-
-    # 1. Deleting these objects triggers their internal __del__ methods,
-    # which safely terminates the PyTorch multiprocessing queues.
     del estimator
     del renderer
-
-    # 2. Force the main process to exit, bypassing any lingering zombie threads
     sys.exit(0)
